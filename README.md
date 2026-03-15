@@ -175,5 +175,3 @@ Right-click any note or folder in the file explorer for context menu options.
 ## License
 
 MIT — see [LICENSE](LICENSE)
-
-Built on [Internet Computer](https://internetcomputer.org/) via [Juno](https://juno.build/).
