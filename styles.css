@@ -1,0 +1,119 @@
+/* MindDock Plugin Styles */
+
+/* Settings page connection section */
+.minddock-connection-section {
+  text-align: center;
+  padding: 40px 20px;
+  background: var(--background-secondary);
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.minddock-logo {
+  font-size: 64px;
+  margin-bottom: 16px;
+}
+
+.minddock-connection-section p {
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+/* Account info section */
+.minddock-account-info {
+  background: var(--background-secondary);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.minddock-status {
+  font-size: 1.1em;
+  font-weight: 600;
+  color: var(--text-success);
+  margin-bottom: 8px;
+}
+
+.minddock-username {
+  font-size: 1.2em;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.minddock-badge {
+  color: var(--text-muted);
+  font-size: 0.95em;
+}
+
+/* Status bar styling */
+.minddock-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.minddock-status-bar.connected {
+  color: var(--text-success);
+}
+
+.minddock-status-bar.disconnected {
+  color: var(--text-muted);
+}
+
+/* File explorer badge */
+.minddock-file-badge {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+/* Context menu icons */
+.menu-item[data-minddock] .menu-item-icon {
+  color: var(--interactive-accent);
+}
+
+/* Notification styling */
+.notice.minddock-notice {
+  background: linear-gradient(135deg, var(--background-secondary) 0%, var(--background-primary) 100%);
+  border-left: 3px solid var(--interactive-accent);
+}
+
+.notice.minddock-notice.success {
+  border-left-color: var(--text-success);
+}
+
+.notice.minddock-notice.error {
+  border-left-color: var(--text-error);
+}
+
+/* Proof verification badge in note */
+.minddock-proof-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.minddock-proof-badge.verified {
+  color: var(--text-success);
+  background: rgba(var(--color-green-rgb), 0.1);
+}
+
+.minddock-proof-badge.modified {
+  color: var(--text-warning);
+  background: rgba(var(--color-orange-rgb), 0.1);
+}
+
+/* Ribbon icon */
+.side-dock-ribbon-action[aria-label="MindDock"] {
+  color: var(--interactive-accent);
+}
+
+.side-dock-ribbon-action[aria-label="MindDock"]:hover {
+  color: var(--interactive-accent-hover);
+}

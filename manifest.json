@@ -1,0 +1,11 @@
+{
+  "id": "minddock",
+  "name": "MindDock",
+  "version": "0.1.0-beta",
+  "minAppVersion": "0.15.0",
+  "description": "Blockchain-verified proof of authorship for your notes. Prove when you wrote what.",
+  "author": "MindDock",
+  "authorUrl": "https://minddock.network",
+  "fundingUrl": "https://minddock.network/support",
+  "isDesktopOnly": false
+}
