@@ -123,7 +123,7 @@ Beta testers build reputation from day one. Reputation is based on account age a
 - 20% off the first 3 months after launching paid plans
 - Priority selection as a Witness in the Proof of Mind system
 
-**Witness ranks:** 🚢 Passenger → ⚓ Sailor → 🧭 Navigator → ⛵ Captain → 🗼 Lighthouse Keeper
+**Witness ranks:** Passenger → Deckhand → Navigator → First Mate → Captain → Admiral → Lighthouse DAO
 
 Witnesses earn up to €5/month in account credit. [Learn more at app.minddock.network](https://app.minddock.network)
 
