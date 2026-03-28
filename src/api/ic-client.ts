@@ -17,7 +17,7 @@ import { HttpAgent, Actor } from '@dfinity/agent';
 import { IDL } from '@dfinity/candid';
 import { Ed25519KeyIdentity, DelegationChain, DelegationIdentity } from '@dfinity/identity';
 import { Principal } from '@dfinity/principal';
-import { sha256 } from '../crypto/hash';
+import { sha256, sha256Async } from '../crypto/hash';
 
 // @dfinity/vetkeys wordt lazy geladen (WASM) — zie fetchVetKey()
 type TransportSecretKeyType = import('@dfinity/vetkeys').TransportSecretKey;
@@ -875,6 +875,8 @@ export class MindDockICClient {
 
       // Juno vereist de huidige version bij een update (optimistic concurrency control).
       let docVersion: [] | [bigint] = [];
+      // Oude plaintext inhoud voor delta hash en versiegeschiedenis
+      let oldPlaintextContent: string | undefined;
 
       if (isUpdate) {
         try {
@@ -885,6 +887,19 @@ export class MindDockICClient {
             noteData.editCount = (existingData.editCount || 0) + 1;
             // Bewaar version voor set_doc — Juno gooit 'no_version_provided' zonder dit
             docVersion = existing[0].version;
+            // Ontsleutel oude inhoud voor delta hash en versiegeschiedenis
+            if (existingData.encryptedContent) {
+              try {
+                oldPlaintextContent = await this.encryption.decrypt(
+                  existingData.encryptedContent,
+                  'notes',
+                  noteId,
+                  existingData.encryptionVersion || 'local-v1'
+                );
+              } catch {
+                // Kan oude inhoud niet ontsleutelen — delta hash wordt weggelaten
+              }
+            }
           }
         } catch (e) {
           noteData.createdAt = now;
@@ -903,8 +918,19 @@ export class MindDockICClient {
 
       console.log('[MindDock IC] Notitie gedockt:', noteId);
 
+      // Versiegeschiedenis opslaan — versionNumber ook doorgeven aan audit entry
+      let savedVersionNumber = 1;
       try {
-        await this.createAuditEntry(noteId, title, content, isUpdate ? 'note.updated' : 'note.created');
+        const latestVersion = await this.getLatestVersionNumber(noteId);
+        savedVersionNumber = latestVersion + 1;
+        console.log(`[MindDock IC] Versie opslaan: v${savedVersionNumber} voor notitie ${noteId}`);
+        await this.saveVersionEntry(noteId, content, savedVersionNumber);
+      } catch (versionError) {
+        console.error('[MindDock IC] Versie opslag mislukt:', versionError);
+      }
+
+      try {
+        await this.createAuditEntry(noteId, title, content, isUpdate ? 'note.updated' : 'note.created', oldPlaintextContent, savedVersionNumber);
       } catch (auditError) {
         console.warn('[MindDock IC] Audit trail mislukt (niet-blokkerend):', auditError);
       }
@@ -1002,15 +1028,19 @@ export class MindDockICClient {
     noteId: string,
     title: string,
     content: string,
-    action: 'note.created' | 'note.updated'
+    action: 'note.created' | 'note.updated',
+    oldContent?: string,
+    versionNumber?: number
   ): Promise<void> {
     if (!this.satelliteActor) return;
 
     const auditId = this.generateId();
     const now = Date.now();
-    // Gebruik whoami()-resultaat (authoratief) — consistent met getTokenInfo()
     const principalText = this.displayPrincipalId ?? this.payload.principalId;
-    const contentHashValue = sha256(content.replace(/\s+$/gm, '').replace(/\r\n/g, '\n'));
+    // Gebruik dezelfde normalisatie en hash-methode als de web app's generateContentHash:
+    // SHA-256(JSON.stringify(content.trim().replace(/\r\n/g, '\n')))
+    const normalizedNew = content.trim().replace(/\r\n/g, '\n');
+    const contentHashAfter = await sha256Async(JSON.stringify(normalizedNew));
 
     const actor = {
       userId: principalText,
@@ -1031,7 +1061,37 @@ export class MindDockICClient {
       sessionId: `obsidian-${Date.now()}`,
     };
 
-    const entryWithoutSig = {
+    // Bereken content hash (voor+na) en delta hash bij updates
+    const contentHash: Record<string, any> = {
+      after: contentHashAfter,
+      algorithm: 'SHA-256',
+      timestamp: now,
+      // versionNumber koppelt de audit entry aan de versie in content_versions
+      // — vereist door VersionListItem om "Verifieer Hash" knop te tonen
+      ...(versionNumber !== undefined ? { versionNumber } : {}),
+    };
+
+    let deltaHash: Record<string, any> | undefined;
+
+    if (action === 'note.updated' && oldContent !== undefined) {
+      const normalizedOld = oldContent.trim().replace(/\r\n/g, '\n');
+      contentHash.before = await sha256Async(JSON.stringify(normalizedOld));
+
+      const stats = this.calculateDiffStats(normalizedOld, normalizedNew);
+      deltaHash = {
+        diffHash: sha256(normalizedOld + '\x00' + normalizedNew),
+        addedLines: stats.addedLines,
+        removedLines: stats.removedLines,
+        changedLines: stats.changedLines,
+        addedChars: stats.addedChars,
+        removedChars: stats.removedChars,
+        changePercentage: stats.changePercentage,
+        isMinorEdit: stats.isMinorEdit,
+        isMajorRewrite: stats.isMajorRewrite,
+      };
+    }
+
+    const entryWithoutSig: Record<string, any> = {
       version: 1,
       id: auditId,
       timestamp: now,
@@ -1041,14 +1101,14 @@ export class MindDockICClient {
       resourceTitle: title,
       actor,
       context,
-      contentHash: {
-        after: contentHashValue,
-        algorithm: 'SHA-256',
-        timestamp: now,
-      },
+      contentHash,
       chainIndex: 0,
       previousHash: undefined,
     };
+
+    if (deltaHash) {
+      entryWithoutSig.deltaHash = deltaHash;
+    }
 
     const signatureHash = sha256(JSON.stringify(entryWithoutSig));
     const auditEntry = {
@@ -1064,6 +1124,113 @@ export class MindDockICClient {
     });
   }
 
+  private calculateDiffStats(oldContent: string, newContent: string): {
+    addedLines: number;
+    removedLines: number;
+    changedLines: number;
+    addedChars: number;
+    removedChars: number;
+    changePercentage: number;
+    isMinorEdit: boolean;
+    isMajorRewrite: boolean;
+  } {
+    const oldLines = oldContent.split('\n');
+    const newLines = newContent.split('\n');
+    const minLen = Math.min(oldLines.length, newLines.length);
+
+    let changedLines = 0;
+    for (let i = 0; i < minLen; i++) {
+      if (oldLines[i] !== newLines[i]) changedLines++;
+    }
+
+    const addedLines = Math.max(0, newLines.length - oldLines.length);
+    const removedLines = Math.max(0, oldLines.length - newLines.length);
+    const addedChars = Math.max(0, newContent.length - oldContent.length);
+    const removedChars = Math.max(0, oldContent.length - newContent.length);
+
+    const maxLen = Math.max(oldContent.length, newContent.length);
+    const rawPct = maxLen > 0
+      ? Math.round((Math.abs(newContent.length - oldContent.length) + changedLines * 5) / maxLen * 100)
+      : 0;
+    const changePercentage = Math.min(rawPct, 100);
+
+    return {
+      addedLines,
+      removedLines,
+      changedLines,
+      addedChars,
+      removedChars,
+      changePercentage,
+      isMinorEdit: changePercentage < 20,
+      isMajorRewrite: changePercentage > 80,
+    };
+  }
+
+  private async getLatestVersionNumber(noteId: string): Promise<number> {
+    try {
+      const result = await this.satelliteActor.list_docs('content_versions', {
+        matcher: [{ key: [`${noteId}_v`], description: [] }],
+        paginate: [],
+        order: [],
+        owner: [],
+      });
+      let max = 0;
+      for (const [key] of result.items) {
+        const match = (key as string).match(/_v(\d+)$/);
+        if (match) {
+          const n = parseInt(match[1], 10);
+          if (n > max) max = n;
+        }
+      }
+      return max;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async saveVersionEntry(noteId: string, content: string, versionNumber: number): Promise<void> {
+    const timestamp = Date.now();
+    const isVetKeys = this.encryption.getVersion() === 'vetkeys-v1';
+
+    let storedContent: string;
+    let encrypted: boolean;
+
+    if (isVetKeys) {
+      // vetkeys-v1: versleutel met dezelfde context als de web app ('version')
+      // → web app kan decrypten met VersionStorage.decryptContent(content, noteId)
+      const { ciphertext } = await this.encryption.encrypt(content, 'version', noteId);
+      storedContent = ciphertext;
+      encrypted = true;
+    } else {
+      // local-v1: web app heeft geen local-v1 decryptie voor versies
+      // → sla ruwe plaintext op zodat preview én hash-verificatie correct werken
+      storedContent = content;
+      encrypted = false;
+    }
+
+    const versionData = {
+      noteId,
+      version: versionNumber,
+      timestamp,
+      data: {
+        version: versionNumber,
+        content: storedContent,
+        timestamp,
+        isSnapshot: true,
+        encrypted,
+      },
+    };
+
+    const key = `${noteId}_v${versionNumber}`;
+    const dataBlob = new TextEncoder().encode(JSON.stringify(versionData));
+    await this.satelliteActor.set_doc('content_versions', key, {
+      data: Array.from(dataBlob),
+      description: [`Version ${versionNumber} of note ${noteId}`],
+      version: [],
+    });
+    console.log(`[MindDock IC] Versie ${versionNumber} opgeslagen (${isVetKeys ? 'vetkeys-v1' : 'local-v1 plaintext'}) voor notitie ${noteId}`);
+  }
+
   private generateId(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
     const bytes = crypto.getRandomValues(new Uint8Array(21));
@@ -1072,6 +1239,34 @@ export class MindDockICClient {
       id += chars[byte % chars.length];
     }
     return id;
+  }
+
+  /**
+   * Get the rank badge for the current user from the user_ranks collection.
+   * Returns a badge string (emoji + label), falls back to '🚢 Passenger'.
+   */
+  async getUserRankBadge(): Promise<string> {
+    if (!this.satelliteActor) return 'ship';
+    try {
+      const result = await this.satelliteActor.get_doc('user_ranks', this.payload.principalId);
+      const doc = result && 'Ok' in result ? result.Ok : (Array.isArray(result) && result[0] ? result[0] : null);
+      if (!doc?.data) return 'ship';
+
+      const record = JSON.parse(new TextDecoder().decode(new Uint8Array(doc.data)));
+      // Returns Lucide icon names (kebab-case) — used by Obsidian's setIcon API
+      const ranks: Record<string, string> = {
+        passenger:      'ship',
+        deckhand:       'anchor',
+        navigator:      'compass',
+        first_mate:     'map',
+        captain:        'sailboat',
+        admiral:        'award',
+        lighthouse_dao: 'tower-control',
+      };
+      return ranks[record.rank] ?? 'ship';
+    } catch {
+      return 'ship';
+    }
   }
 
   destroy(): void {

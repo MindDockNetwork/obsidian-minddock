@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type MindDockPlugin from "./main";
 import { t } from "./i18n";
 
@@ -17,6 +17,24 @@ export const DEFAULT_SETTINGS: MindDockSettings = {
   showStatusBar: true,
 };
 
+/** Create a heading element with a Lucide icon prefix */
+function iconHeading(container: HTMLElement, tag: keyof HTMLElementTagNameMap, iconName: string, text: string): HTMLElement {
+  const el = container.createEl(tag as any);
+  const iconSpan = el.createSpan({ cls: 'minddock-heading-icon' });
+  setIcon(iconSpan, iconName);
+  el.createSpan({ text: ` ${text}` });
+  return el;
+}
+
+/** Create an info row with a Lucide icon + text */
+function iconRow(container: HTMLElement, iconName: string, text: string, cls: string): HTMLElement {
+  const row = container.createDiv({ cls });
+  const iconSpan = row.createSpan({ cls: 'minddock-row-icon' });
+  setIcon(iconSpan, iconName);
+  row.createSpan({ text: ` ${text}` });
+  return row;
+}
+
 export class MindDockSettingTab extends PluginSettingTab {
   plugin: MindDockPlugin;
 
@@ -29,7 +47,7 @@ export class MindDockSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h1", { text: t('settingsTitle') });
+    iconHeading(containerEl, 'h1', 'anchor', t('settingsTitle'));
 
     this.displayConnectionStatus(containerEl);
     this.displayApiTokenSection(containerEl);
@@ -45,45 +63,29 @@ export class MindDockSettingTab extends PluginSettingTab {
       const isExpired = Date.now() > info.expiresAt;
       const daysLeft = Math.ceil((info.expiresAt - Date.now()) / (1000 * 60 * 60 * 24));
 
-      statusDiv.createEl("div", {
-        text: t('statusConnected'),
-        cls: "minddock-status-connected"
-      });
-      statusDiv.createEl("div", {
-        text: t('principal', `${info.principalId.slice(0, 15)}...${info.principalId.slice(-10)}`),
-        cls: "setting-item-description"
-      });
-      statusDiv.createEl("div", {
-        text: t('scopes', info.scopes.join(', ')),
-        cls: "setting-item-description"
-      });
-      statusDiv.createEl("div", {
-        text: isExpired
+      iconRow(statusDiv, 'circle-check', t('statusConnected'), 'minddock-status-connected');
+      iconRow(statusDiv, 'user', t('principal', `${info.principalId.slice(0, 15)}...${info.principalId.slice(-10)}`), 'setting-item-description');
+      iconRow(statusDiv, 'key', t('scopes', info.scopes.join(', ')), 'setting-item-description');
+      iconRow(
+        statusDiv,
+        isExpired ? 'alert-circle' : 'clock',
+        isExpired
           ? t('tokenExpired', expiresDate.toLocaleDateString())
           : t('tokenExpires', daysLeft, expiresDate.toLocaleDateString()),
-        cls: isExpired ? "minddock-expired" : "setting-item-description"
-      });
+        isExpired ? 'minddock-expired' : 'setting-item-description'
+      );
 
       const encVersion = this.plugin.icClient!.getEncryptionVersion();
       const tokenMode = this.plugin.icClient!.getTokenEncryptionMode();
 
       if (tokenMode === 'vetkeys-v1') {
         if (encVersion === 'vetkeys-v1') {
-          statusDiv.createEl("div", {
-            text: t('vetkeysActive'),
-            cls: "setting-item-description"
-          });
+          iconRow(statusDiv, 'shield-check', t('vetkeysActive'), 'setting-item-description');
         } else {
-          statusDiv.createEl("div", {
-            text: t('vetkeysOffline'),
-            cls: "minddock-status-warning"
-          });
+          iconRow(statusDiv, 'alert-triangle', t('vetkeysOffline'), 'minddock-status-warning');
         }
       } else {
-        statusDiv.createEl("div", {
-          text: t('localEncryption'),
-          cls: "setting-item-description"
-        });
+        iconRow(statusDiv, 'lock', t('localEncryption'), 'setting-item-description');
       }
 
       new Setting(containerEl)
@@ -92,6 +94,7 @@ export class MindDockSettingTab extends PluginSettingTab {
         .addButton((btn) =>
           btn
             .setButtonText(t('testButton'))
+            .setIcon('link')
             .onClick(async () => {
               const result = await this.plugin.icClient!.testConnection();
               if (result.success) {
@@ -102,20 +105,14 @@ export class MindDockSettingTab extends PluginSettingTab {
             })
         );
     } else if (this.plugin.settings.apiToken) {
-      statusDiv.createEl("div", {
-        text: t('statusTokenInvalid'),
-        cls: "minddock-status-error"
-      });
+      iconRow(statusDiv, 'alert-circle', t('statusTokenInvalid'), 'minddock-status-error');
     } else {
-      statusDiv.createEl("div", {
-        text: t('statusNotConnected'),
-        cls: "minddock-status-disconnected"
-      });
+      iconRow(statusDiv, 'anchor', t('statusNotConnected'), 'minddock-status-disconnected');
     }
   }
 
   private displayApiTokenSection(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: t('sectionApiToken') });
+    iconHeading(containerEl, 'h2', 'key', t('sectionApiToken'));
 
     if (!this.plugin.settings.apiToken) {
       const setupDiv = containerEl.createDiv({ cls: "minddock-setup-instructions" });
@@ -153,6 +150,7 @@ export class MindDockSettingTab extends PluginSettingTab {
         .addButton((btn) =>
           btn
             .setButtonText(t('removeTokenButton'))
+            .setIcon('trash-2')
             .setWarning()
             .onClick(async () => {
               this.plugin.settings.apiToken = "";
@@ -164,14 +162,11 @@ export class MindDockSettingTab extends PluginSettingTab {
     }
 
     const encryptionInfo = containerEl.createDiv({ cls: "minddock-encryption-info" });
-    encryptionInfo.createEl("p", {
-      text: t('encryptionInfo'),
-      cls: "setting-item-description"
-    });
+    iconRow(encryptionInfo, 'shield', t('encryptionInfo'), 'setting-item-description');
   }
 
   private displayProofOptions(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: t('sectionProofOptions') });
+    iconHeading(containerEl, 'h2', 'file-check', t('sectionProofOptions'));
 
     new Setting(containerEl)
       .setName(t('frontmatterName'))

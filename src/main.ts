@@ -23,6 +23,7 @@ import {
   TAbstractFile,
   Menu,
   MenuItem,
+  setIcon,
 } from "obsidian";
 import { MindDockSettings, DEFAULT_SETTINGS, MindDockSettingTab } from "./settings";
 import { MindDockICClient } from "./api/ic-client";
@@ -34,14 +35,15 @@ export default class MindDockPlugin extends Plugin {
   settings: MindDockSettings;
   statusBarItem: HTMLElement;
   icClient: MindDockICClient | null = null;
+  private userRankBadge: string = 'ship'; // Lucide icon name (kebab-case)
 
   async onload() {
     await this.loadSettings();
 
     // Status bar item
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setText("⚓ MindDock");
     this.statusBarItem.addClass("minddock-status");
+    this.renderStatusBar('anchor', 'MindDock');
 
     // Initialize IC client if token is configured
     await this.initializeClient();
@@ -228,6 +230,8 @@ export default class MindDockPlugin extends Plugin {
       });
 
       this.updateStatusBar();
+      // Load rank badge async — non-blocking, refreshes statusbar when done
+      this.loadUserRank();
     } catch (error) {
       console.error('[MindDock] Failed to initialize client:', error);
       this.icClient = null;
@@ -245,17 +249,41 @@ export default class MindDockPlugin extends Plugin {
   }
 
   /**
+   * Render status bar with a Lucide icon + text
+   */
+  renderStatusBar(iconName: string, text: string) {
+    this.statusBarItem.empty();
+    const iconEl = this.statusBarItem.createSpan({ cls: 'minddock-rank-icon' });
+    setIcon(iconEl, iconName);
+    this.statusBarItem.createSpan({ text: ` ${text}` });
+  }
+
+  /**
    * Update status bar
    */
   updateStatusBar() {
     if (this.icClient) {
       const info = this.icClient.getTokenInfo();
       const shortPrincipal = info.principalId.slice(0, 8);
-      this.statusBarItem.setText(t('statusBarConnected', shortPrincipal));
+      this.renderStatusBar(this.userRankBadge, t('statusBarConnected', shortPrincipal));
     } else if (this.settings.apiToken) {
-      this.statusBarItem.setText(t('statusBarInvalid'));
+      this.renderStatusBar('alert-triangle', t('statusBarInvalid'));
     } else {
-      this.statusBarItem.setText(t('statusBarNoToken'));
+      this.renderStatusBar('anchor', t('statusBarNoToken'));
+    }
+  }
+
+  /**
+   * Fetch rank badge from user_ranks collection and refresh status bar
+   */
+  async loadUserRank() {
+    if (!this.icClient) return;
+    try {
+      const badge = await this.icClient.getUserRankBadge();
+      this.userRankBadge = badge; // already a Lucide kebab-case icon name
+      this.updateStatusBar();
+    } catch {
+      // Non-fatal — keep default badge
     }
   }
 
